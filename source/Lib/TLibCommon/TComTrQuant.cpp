@@ -1066,39 +1066,8 @@ int TComTrQuant::getSigCtxInc(int      patternSigCtx,
     int posYinSubset = posY & 3;
 
     // NOTE: [patternSigCtx][posXinSubset][posYinSubset]
-    static uint8_t table_cnt[4][4][4] =
-    {
-        // patternSigCtx = 0
-        {
-            { 2, 1, 1, 0 },
-            { 1, 1, 0, 0 },
-            { 1, 0, 0, 0 },
-            { 0, 0, 0, 0 },
-        },
-        // patternSigCtx = 1
-        {
-            { 2, 1, 0, 0 },
-            { 2, 1, 0, 0 },
-            { 2, 1, 0, 0 },
-            { 2, 1, 0, 0 },
-        },
-        // patternSigCtx = 2
-        {
-            { 2, 2, 2, 2 },
-            { 1, 1, 1, 1 },
-            { 0, 0, 0, 0 },
-            { 0, 0, 0, 0 },
-        },
-        // patternSigCtx = 3
-        {
-            { 2, 2, 2, 2 },
-            { 2, 2, 2, 2 },
-            { 2, 2, 2, 2 },
-            { 2, 2, 2, 2 },
-        }
-    };
-
-    int cnt = table_cnt[patternSigCtx][posXinSubset][posYinSubset];
+    static uint32_t table_cnt[4] = { 0x00010516, 0x06060606, 0x000055AA, 0xAAAAAAAA };
+    int cnt = (table_cnt[patternSigCtx] >> (posXinSubset * 8 + posYinSubset * 2)) & 3;//[posXinSubset][posYinSubset];
     int offset = log2BlockSize == 3 ? (scanIdx == SCAN_DIAG ? 9 : 15) : (ttype == TEXT_LUMA ? 21 : 12);
 
     offset += cnt;
