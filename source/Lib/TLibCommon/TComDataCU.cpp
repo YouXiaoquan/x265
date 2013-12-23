@@ -497,13 +497,6 @@ void TComDataCU::copyToSubCU(TComDataCU* cu, uint32_t partUnitIdx, uint32_t dept
     memcpy(m_depth, rpcCU->getDepth() + m_absIdxInLCU, iSizeInUchar);
     memcpy(m_width, rpcCU->getWidth() + m_absIdxInLCU, iSizeInUchar);
     memcpy(m_height, rpcCU->getHeight() + m_absIdxInLCU, iSizeInUchar);
-
-    uint32_t tmp = (g_maxCUWidth * g_maxCUHeight) >> (depth << 1);
-    memset(m_trCoeffY, 0, sizeof(TCoeff) * tmp);
-
-    tmp  = ((g_maxCUWidth >> m_hChromaShift) * (g_maxCUHeight >> m_hChromaShift)) >> (depth << 1);
-    memset(m_trCoeffCb, 0, sizeof(TCoeff) * tmp);
-    memset(m_trCoeffCr, 0, sizeof(TCoeff) * tmp);
 }
 // --------------------------------------------------------------------------------------------------------------------
 // Copy
@@ -656,6 +649,7 @@ void TComDataCU::copyCodedToPic(UChar depth)
     memcpy(rpcCU->getTransformSkip(TEXT_CHROMA_U) + m_absIdxInLCU, m_transformSkip[1], iSizeInUchar);
     memcpy(rpcCU->getTransformSkip(TEXT_CHROMA_V) + m_absIdxInLCU, m_transformSkip[2], iSizeInUchar);
     memcpy(rpcCU->getChromaIntraDir() + m_absIdxInLCU, m_chromaIntraDir, iSizeInUchar);
+    memcpy(rpcCU->getQP() + m_absIdxInLCU, m_qp, sizeof(char) * m_numPartitions);
 
     memcpy(rpcCU->getCbf(TEXT_LUMA) + m_absIdxInLCU, m_cbf[0], iSizeInUchar);
     memcpy(rpcCU->getCbf(TEXT_CHROMA_U) + m_absIdxInLCU, m_cbf[1], iSizeInUchar);

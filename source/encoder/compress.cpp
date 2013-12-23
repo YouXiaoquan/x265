@@ -74,14 +74,12 @@ void TEncCu::xEncodeIntraInInter(TComDataCU* cu, TComYuv* fencYuv, TComYuv* pred
 
     cu->m_totalBits = m_entropyCoder->getNumberOfWrittenBits();
     cu->m_totalCost = m_rdCost->calcRdCost(cu->m_totalDistortion, cu->m_totalBits);
-    xCheckDQP(cu);
 }
 
 void TEncCu::xComputeCostIntraInInter(TComDataCU* cu, PartSize partSize)
 {
     uint32_t depth = cu->getDepth(0);
 
-    cu->setSkipFlagSubParts(false, 0, depth);
     cu->setPartSizeSubParts(partSize, 0, depth);
     cu->setPredModeSubParts(MODE_INTRA, 0, depth);
     cu->setCUTransquantBypassSubParts(m_cfg->getCUTransquantBypassFlagValue(), 0, depth);
@@ -192,9 +190,6 @@ void TEncCu::xComputeCostIntraInInter(TComDataCU* cu, PartSize partSize)
 
     // generate predYuv for the best mode
     cu->setLumaIntraDirSubParts(bmode, partOffset, depth + initTrDepth);
-
-    // set context models
-    m_rdGoOnSbacCoder->load(m_rdSbacCoders[depth][CI_CURR_BEST]);
 }
 
 /** check RD costs for a CU block encoded with merge */
@@ -202,15 +197,11 @@ void TEncCu::xComputeCostInter(TComDataCU* outTempCU, TComYuv* outPredYuv, PartS
 {
     UChar depth = outTempCU->getDepth(0);
 
-    outTempCU->setDepthSubParts(depth, 0);
-    outTempCU->setSkipFlagSubParts(false, 0, depth);
     outTempCU->setPartSizeSubParts(partSize, 0, depth);
     outTempCU->setPredModeSubParts(MODE_INTER, 0, depth);
     outTempCU->setCUTransquantBypassSubParts(m_cfg->getCUTransquantBypassFlagValue(), 0, depth);
 
     outTempCU->setMergeAMP(true);
-    m_tmpRecoYuv[depth]->clear();
-    m_tmpResiYuv[depth]->clear();
 
     //do motion compensation only for Luma since luma cost alone is calculated
     outTempCU->m_totalBits = 0;
@@ -292,6 +283,7 @@ void TEncCu::xComputeCostMerge2Nx2N(TComDataCU*& outBestCU, TComDataCU*& outTemp
     outTempCU->getCUMvField(REF_PIC_LIST_1)->setAllMvField(mvFieldNeighbours[1 + 2 * bestMergeCand], SIZE_2Nx2N, 0, 0);
     outTempCU->m_totalBits = outBestCU->m_totalBits;
     outTempCU->m_totalDistortion = outBestCU->m_totalDistortion;
+    outTempCU->m_totalCost = m_rdCost->calcRdSADCost(outTempCU->m_totalDistortion, outTempCU->m_totalBits);
     if (m_cfg->param.rdLevel > 2)
     {
         //calculate the motion compensation for chroma for the best mode selected
@@ -303,7 +295,6 @@ void TEncCu::xComputeCostMerge2Nx2N(TComDataCU*& outBestCU, TComDataCU*& outTemp
 
         //No-residue mode
         m_search->encodeResAndCalcRdInterCU(outBestCU, m_origYuv[depth], bestPredYuv, m_tmpResiYuv[depth], m_bestResiYuv[depth], m_tmpRecoYuv[depth], true);
-        xCheckDQP(outTempCU);
 
         TComYuv* yuv = yuvReconBest;
         yuvReconBest = m_tmpRecoYuv[depth];
@@ -311,7 +302,6 @@ void TEncCu::xComputeCostMerge2Nx2N(TComDataCU*& outBestCU, TComDataCU*& outTemp
 
         //Encode with residue
         m_search->encodeResAndCalcRdInterCU(outTempCU, m_origYuv[depth], bestPredYuv, m_tmpResiYuv[depth], m_bestResiYuv[depth], m_tmpRecoYuv[depth], false);
-        xCheckDQP(outTempCU);
 
         if (outTempCU->m_totalCost < outBestCU->m_totalCost)    //Choose best from no-residue mode and residue mode
         {
@@ -353,6 +343,10 @@ void TEncCu::xCompressInterCU(TComDataCU*& outBestCU, TComDataCU*& outTempCU, TC
     bool bInsidePicture = (rpelx < outTempCU->getSlice()->getSPS()->getPicWidthInLumaSamples()) &&
         (bpely < outTempCU->getSlice()->getSPS()->getPicHeightInLumaSamples());
 
+    if(depth == 0 && m_cfg->param.rdLevel == 0)
+    {
+        m_origYuv[depth]->copyToPicYuv(cu->getPic()->getPicYuvRec(), cu->getAddr(), 0);
+    }
     // We need to split, so don't try these modes.
     TComYuv* tempYuv = NULL;
 #if TOPSKIP
@@ -417,7 +411,44 @@ void TEncCu::xCompressInterCU(TComDataCU*& outBestCU, TComDataCU*& outTempCU, TC
             xComputeCostMerge2Nx2N(m_bestMergeCU[depth], m_mergeCU[depth], m_modePredYuv[3][depth], m_bestMergeRecoYuv[depth]);
             TComYuv* bestMergePred;
             bestMergePred = m_modePredYuv[3][depth];
-            if (!(m_cfg->param.bEnableEarlySkip && m_bestMergeCU[depth]->isSkipped(0)))
+            bool earlyskip = false;
+            if (m_cfg->param.rdLevel > 1)
+                earlyskip = (m_cfg->param.bEnableEarlySkip && m_bestMergeCU[depth]->isSkipped(0));
+            else if (m_cfg->param.rdLevel == 1)
+            {
+                uint32_t threshold[4] = { 20000, 6000, 1600, 500 };
+                int index = 4 - g_convertToBit[m_bestMergeCU[depth]->getWidth(0)];
+                if (m_bestMergeCU[depth]->m_totalDistortion < threshold[index])
+                {
+                    int numPart = m_bestMergeCU[depth]->getNumPartInter();
+                    for (int partIdx = 0; partIdx < numPart; partIdx++)
+                    {
+                        m_search->motionCompensation(m_bestMergeCU[depth], m_modePredYuv[3][depth], REF_PIC_LIST_X, partIdx, false, true);
+                    }
+
+                    m_bestMergeCU[depth]->setSkipFlagSubParts(true, 0, depth);
+                    m_search->generateCoeffRecon(m_bestMergeCU[depth], m_origYuv[depth], m_modePredYuv[3][depth], m_tmpResiYuv[depth], m_bestMergeRecoYuv[depth], true);
+                    earlyskip = true;
+                }
+            }
+            else if (m_cfg->param.rdLevel == 0)
+            {
+                uint32_t threshold[4] = { 20000, 6000, 1600, 500 };
+                int index = 4 - g_convertToBit[m_bestMergeCU[depth]->getWidth(0)];
+                if (m_bestMergeCU[depth]->m_totalDistortion < threshold[index])
+                {
+                    m_bestMergeCU[depth]->setSkipFlagSubParts(true, 0, depth);
+                    int numPart = m_bestMergeCU[depth]->getNumPartInter();
+                    for (int partIdx = 0; partIdx < numPart; partIdx++)
+                    {
+                        m_search->motionCompensation(m_bestMergeCU[depth], m_modePredYuv[3][depth], REF_PIC_LIST_X, partIdx, false, true);
+                    }
+
+                    xCheckDQP(m_bestMergeCU[depth]);
+                    earlyskip = true;
+                }
+            }
+            if (!earlyskip)
             {
                 /*Compute 2Nx2N mode costs*/
                 {
@@ -513,70 +544,47 @@ void TEncCu::xCompressInterCU(TComDataCU*& outBestCU, TComDataCU*& outTempCU, TC
                         }
                     }
                 }
-            }
-            else
-            {
-                outBestCU = m_bestMergeCU[depth];
-                tempYuv = m_modePredYuv[3][depth];
-                m_modePredYuv[3][depth] = m_bestPredYuv[depth];
-                m_bestPredYuv[depth] = tempYuv;
-
-                tempYuv = m_bestRecoYuv[depth];
-                m_bestRecoYuv[depth] = m_bestMergeRecoYuv[depth];
-                m_bestMergeRecoYuv[depth] = tempYuv;
-            }
-            if (m_cfg->param.rdLevel <= 2)
-            {
-                if (outBestCU->getPredictionMode(0) == MODE_INTER)
-                {
-                    int numPart = outBestCU->getNumPartInter();
-                    for (int partIdx = 0; partIdx < numPart; partIdx++)
-                    {
-                        m_search->motionCompensation(outBestCU, m_bestPredYuv[depth], REF_PIC_LIST_X, partIdx, false, true);
-                    }
-
-                    if (m_cfg->param.rdLevel == 2)
-                    {
-                        m_search->encodeResAndCalcRdInterCU(outBestCU, m_origYuv[depth], m_bestPredYuv[depth], m_tmpResiYuv[depth],
-                                                            m_bestResiYuv[depth], m_bestRecoYuv[depth], false);
-                    }
-                    else if (m_cfg->param.rdLevel == 1)
-                    {
-                        m_tmpResiYuv[depth]->subtract(m_origYuv[depth], m_bestPredYuv[depth], 0, outBestCU->getWidth(0));
-                        m_search->generateCoeffRecon(outBestCU, m_origYuv[depth], m_bestPredYuv[depth], m_tmpResiYuv[depth], m_bestRecoYuv[depth], false);
-                    }
-                    else if (m_cfg->param.rdLevel == 0)
-                    {
-                        m_origYuv[depth]->copyPartToPartYuv(m_bestRecoYuv[depth], 0, outBestCU->getWidth(0), outBestCU->getHeight(0), true, true);
-                    }
-                }
-                else
-                {
-                    if (m_cfg->param.rdLevel == 2)
-                        xEncodeIntraInInter(outBestCU, m_origYuv[depth], m_bestPredYuv[depth], m_tmpResiYuv[depth],  m_bestRecoYuv[depth]);
-                    else if (m_cfg->param.rdLevel == 1)
-                    {
-                        m_search->generateCoeffRecon(outBestCU, m_origYuv[depth], m_bestPredYuv[depth], m_tmpResiYuv[depth], m_bestRecoYuv[depth], false);
-                    }
-                    else if (m_cfg->param.rdLevel == 0)
-                    {
-                        m_origYuv[depth]->copyPartToPartYuv(m_bestRecoYuv[depth], 0, outBestCU->getWidth(0), outBestCU->getHeight(0), true, true);
-                    }
-                }
-                //Check Merge-skip
                 if (m_cfg->param.rdLevel <= 2)
                 {
-                    if (!(outBestCU->getPredictionMode(0) == MODE_INTER && outBestCU->getPartitionSize(0) == SIZE_2Nx2N && outBestCU->getMergeFlag(0)))
+                    if (outBestCU->getPredictionMode(0) == MODE_INTER)
                     {
-                        int numPart = m_mergeCU[depth]->getNumPartInter();
+                        int numPart = outBestCU->getNumPartInter();
                         for (int partIdx = 0; partIdx < numPart; partIdx++)
                         {
-                            m_search->motionCompensation(m_mergeCU[depth], bestMergePred, REF_PIC_LIST_X, partIdx, false, true);
+                            m_search->motionCompensation(outBestCU, m_bestPredYuv[depth], REF_PIC_LIST_X, partIdx, false, true);
+                        }
+
+                        if (m_cfg->param.rdLevel == 2)
+                        {
+                            m_search->encodeResAndCalcRdInterCU(outBestCU, m_origYuv[depth], m_bestPredYuv[depth], m_tmpResiYuv[depth],
+                                                                m_bestResiYuv[depth], m_bestRecoYuv[depth], false);
+                        }
+                        else if (m_cfg->param.rdLevel == 1)
+                        {
+                            m_tmpResiYuv[depth]->subtract(m_origYuv[depth], m_bestPredYuv[depth], 0, outBestCU->getWidth(0));
+                            m_search->generateCoeffRecon(outBestCU, m_origYuv[depth], m_bestPredYuv[depth], m_tmpResiYuv[depth], m_bestRecoYuv[depth], false);
                         }
                     }
-
+                    else
+                    {
+                        if (m_cfg->param.rdLevel == 2)
+                            xEncodeIntraInInter(outBestCU, m_origYuv[depth], m_bestPredYuv[depth], m_tmpResiYuv[depth],  m_bestRecoYuv[depth]);
+                        else if (m_cfg->param.rdLevel == 1)
+                        {
+                            m_search->generateCoeffRecon(outBestCU, m_origYuv[depth], m_bestPredYuv[depth], m_tmpResiYuv[depth], m_bestRecoYuv[depth], false);
+                        }
+                    }
+                    //Check Merge-skip
                     if (m_cfg->param.rdLevel == 2)
                     {
+                        if (!(outBestCU->getPredictionMode(0) == MODE_INTER && outBestCU->getPartitionSize(0) == SIZE_2Nx2N && outBestCU->getMergeFlag(0)))
+                        {
+                            int numPart = m_mergeCU[depth]->getNumPartInter();
+                            for (int partIdx = 0; partIdx < numPart; partIdx++)
+                            {
+                                m_search->motionCompensation(m_mergeCU[depth], bestMergePred, REF_PIC_LIST_X, partIdx, false, true);
+                            }
+                        }
                         m_search->encodeResAndCalcRdInterCU(m_mergeCU[depth], m_origYuv[depth], bestMergePred, m_tmpResiYuv[depth],
                                                             m_bestResiYuv[depth], m_tmpRecoYuv[depth], true);
 
@@ -592,36 +600,22 @@ void TEncCu::xCompressInterCU(TComDataCU*& outBestCU, TComDataCU*& outTempCU, TC
                             }
                         }
                     }
-                    else if (m_cfg->param.rdLevel == 1)
-                    {
-                        uint32_t threshold[4] = { 20000, 6000, 1600, 500 };
-                        int index = 4 - g_convertToBit[outBestCU->getWidth(0)];
-                        if (m_mergeCU[depth]->m_totalDistortion < threshold[index])
-                        {
-                            m_mergeCU[depth]->setSkipFlagSubParts(true, 0, depth);
-                            m_search->generateCoeffRecon(m_mergeCU[depth], m_origYuv[depth], bestMergePred, m_tmpResiYuv[depth], m_bestRecoYuv[depth], true);
-                            outBestCU = m_mergeCU[depth];
-                        }
-                    }
-                    else if (m_cfg->param.rdLevel == 0)
-                    {
-                        uint32_t threshold[4] = { 20000, 6000, 1600, 500 };
-                        int index = 4 - g_convertToBit[outBestCU->getWidth(0)];
-                        if (m_mergeCU[depth]->m_totalDistortion < threshold[index])
-                        {
-                            m_mergeCU[depth]->setSkipFlagSubParts(true, 0, depth);
-                            outBestCU = m_mergeCU[depth];
-                            if (bestMergePred != m_bestPredYuv[depth])
-                            {
-                                bestMergePred->copyPartToPartYuv(m_bestPredYuv[depth], 0, outBestCU->getWidth(0), outBestCU->getHeight(0));
-                            }
-                            m_origYuv[depth]->copyPartToPartYuv(m_bestRecoYuv[depth], 0, outBestCU->getWidth(0), outBestCU->getHeight(0), true, true);
-                        }
-                    }
                 }
             }
+            else
+            {
+                outBestCU = m_bestMergeCU[depth];
+                tempYuv = m_modePredYuv[3][depth];
+                m_modePredYuv[3][depth] = m_bestPredYuv[depth];
+                m_bestPredYuv[depth] = tempYuv;
 
-            xCheckDQP(outBestCU);
+                tempYuv = m_bestRecoYuv[depth];
+                m_bestRecoYuv[depth] = m_bestMergeRecoYuv[depth];
+                m_bestMergeRecoYuv[depth] = tempYuv;
+            }
+
+            if (m_cfg->param.rdLevel > 0) //checkDQP can be done only after residual encoding is done
+                xCheckDQP(outBestCU);
             /* Disable recursive analysis for whole CUs temporarily */
             if ((outBestCU != 0) && (outBestCU->isSkipped(0)))
                 bSubBranch = false;
@@ -697,7 +691,8 @@ void TEncCu::xCompressInterCU(TComDataCU*& outBestCU, TComDataCU*& outTempCU, TC
                 outBestCU->copyToPic((UChar)depth);
 
                 /* Copy Yuv data to picture Yuv */
-                xCopyYuv2Pic(outBestCU->getPic(), outBestCU->getAddr(), outBestCU->getZorderIdxInCU(), depth, depth, outBestCU, lpelx, tpely);
+                if(m_cfg->param.rdLevel != 0)
+                    xCopyYuv2Pic(outBestCU->getPic(), outBestCU->getAddr(), outBestCU->getZorderIdxInCU(), depth, depth, outBestCU, lpelx, tpely);
                 return;
             }
         }
@@ -735,7 +730,8 @@ void TEncCu::xCompressInterCU(TComDataCU*& outBestCU, TComDataCU*& outTempCU, TC
 #endif // if EARLY_EXIT
                 /* Adding costs from best SUbCUs */
                 outTempCU->copyPartFrom(subBestPartCU, nextDepth_partIndex, nextDepth, true); // Keep best part data to current temporary data.
-                xCopyYuv2Tmp(subBestPartCU->getTotalNumPart() * nextDepth_partIndex, nextDepth);
+                if(m_cfg->param.rdLevel != 0)
+                    xCopyYuv2Tmp(subBestPartCU->getTotalNumPart() * nextDepth_partIndex, nextDepth);
                 if (m_cfg->param.rdLevel == 0)
                     m_bestPredYuv[nextDepth]->copyToPartYuv(m_tmpPredYuv[depth], subBestPartCU->getTotalNumPart() * nextDepth_partIndex);
             }
@@ -832,7 +828,7 @@ void TEncCu::xCompressInterCU(TComDataCU*& outBestCU, TComDataCU*& outTempCU, TC
     {
         encodeResidue(outBestCU, outBestCU, 0, 0);
     }
-    else
+    else if(m_cfg->param.rdLevel != 0)
     {
         /* Copy Yuv data to picture Yuv */
         xCopyYuv2Pic(outBestCU->getPic(), outBestCU->getAddr(), outBestCU->getZorderIdxInCU(), depth, depth, outBestCU, lpelx, tpely);
@@ -901,6 +897,7 @@ void TEncCu::encodeResidue(TComDataCU* lcu, TComDataCU* cu, uint32_t absPartIdx,
 
             //Residual encoding
             m_search->residualTransformQuantInter(cu, 0, 0, m_tmpResiYuv[depth], cu->getDepth(0), true);
+            xCheckDQP(cu);
 
             if (lcu->getMergeFlag(absPartIdx) && cu->getPartitionSize(0) == SIZE_2Nx2N && !cu->getQtRootCbf(0))
             {
@@ -914,54 +911,54 @@ void TEncCu::encodeResidue(TComDataCU* lcu, TComDataCU* cu, uint32_t absPartIdx,
                 //Generate Recon
                 Pel* pred = m_bestPredYuv[0]->getLumaAddr(absPartIdx);
                 int16_t* res = m_tmpResiYuv[depth]->getLumaAddr(0);
-                Pel* reco = m_bestRecoYuv[0]->getLumaAddr(absPartIdx);
-                dststride = m_bestRecoYuv[0]->getStride();
+                Pel* reco = m_bestRecoYuv[depth]->getLumaAddr(0);
+                dststride = m_bestRecoYuv[depth]->getStride();
                 src1stride = m_bestPredYuv[0]->getStride();
                 src2stride = m_tmpResiYuv[depth]->m_width;
                 primitives.luma_add_ps[part](reco, dststride, pred, res, src1stride, src2stride);
 
                 pred = m_bestPredYuv[0]->getCbAddr(absPartIdx);
                 res = m_tmpResiYuv[depth]->getCbAddr(0);
-                reco = m_bestRecoYuv[0]->getCbAddr(absPartIdx);
-                dststride = m_bestRecoYuv[0]->getCStride();
+                reco = m_bestRecoYuv[depth]->getCbAddr(0);
+                dststride = m_bestRecoYuv[depth]->getCStride();
                 src1stride = m_bestPredYuv[0]->getCStride();
                 src2stride = m_tmpResiYuv[depth]->m_cwidth;
                 primitives.chroma[m_cfg->param.internalCsp].add_ps[part](reco, dststride, pred, res, src1stride, src2stride);
 
                 pred = m_bestPredYuv[0]->getCrAddr(absPartIdx);
                 res = m_tmpResiYuv[depth]->getCrAddr(0);
-                reco = m_bestRecoYuv[0]->getCrAddr(absPartIdx);
+                reco = m_bestRecoYuv[depth]->getCrAddr(0);
                 primitives.chroma[m_cfg->param.internalCsp].add_ps[part](reco, dststride, pred, res, src1stride, src2stride);
-                m_bestRecoYuv[0]->copyToPicYuv(lcu->getPic()->getPicYuvRec(), lcu->getAddr(), 0);
+                m_bestRecoYuv[depth]->copyToPicYuv(lcu->getPic()->getPicYuvRec(), lcu->getAddr(), absPartIdx);
                 return;
             }
         }
 
         //Generate Recon
+        TComPicYuv* rec = lcu->getPic()->getPicYuvRec();
         int part = partitionFromSizes(cu->getWidth(0), cu->getWidth(0));
         Pel* src = m_bestPredYuv[0]->getLumaAddr(absPartIdx);
-        Pel* dst = m_bestRecoYuv[0]->getLumaAddr(absPartIdx);
+        Pel* dst = rec->getLumaAddr(cu->getAddr(), absPartIdx);
         uint32_t srcstride = m_bestPredYuv[0]->getStride();
-        uint32_t dststride = m_bestRecoYuv[0]->getStride();
+        uint32_t dststride = rec->getStride();
         primitives.luma_copy_pp[part](dst, dststride, src, srcstride);
 
         src = m_bestPredYuv[0]->getCbAddr(absPartIdx);
-        dst = m_bestRecoYuv[0]->getCbAddr(absPartIdx);
+        dst = rec->getCbAddr(cu->getAddr(), absPartIdx);
         srcstride = m_bestPredYuv[0]->getCStride();
-        dststride = m_bestRecoYuv[0]->getCStride();
+        dststride = rec->getCStride();
         primitives.chroma[m_cfg->param.internalCsp].copy_pp[part](dst, dststride, src, srcstride);
 
         src = m_bestPredYuv[0]->getCrAddr(absPartIdx);
-        dst = m_bestRecoYuv[0]->getCrAddr(absPartIdx);
+        dst = rec->getCrAddr(cu->getAddr(), absPartIdx);
         primitives.chroma[m_cfg->param.internalCsp].copy_pp[part](dst, dststride, src, srcstride);
-        m_bestRecoYuv[0]->copyToPicYuv(lcu->getPic()->getPicYuvRec(), lcu->getAddr(), 0);
     }
     else
     {
         m_origYuv[0]->copyPartToYuv(m_origYuv[depth], absPartIdx);
         m_search->generateCoeffRecon(cu, m_origYuv[depth], m_modePredYuv[5][depth], m_tmpResiYuv[depth],  m_tmpRecoYuv[depth], false);
+        xCheckDQP(cu);
         m_tmpRecoYuv[depth]->copyToPicYuv(cu->getPic()->getPicYuvRec(), lcu->getAddr(), absPartIdx);
-        m_tmpRecoYuv[depth]->copyToPartYuv(m_bestRecoYuv[0], absPartIdx);
         cu->copyCodedToPic(depth);
     }
 }
