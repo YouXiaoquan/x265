@@ -392,12 +392,13 @@ int x265_param_default_preset(x265_param *param, const char *preset, const char 
     {
         if (!strcmp(tune, "psnr"))
         {
-            /* current default - do nothing*/            
+            param->rc.aqMode = X265_AQ_NONE;
+            param->rc.aqStrength = 0.0;
+            param->rc.cuTree = 0;
         }
         else if (!strcmp(tune, "ssim"))
         {
-            param->rc.aqMode = X265_AQ_VARIANCE;
-            param->rc.aqStrength = 1.0;
+            /* Current Default: Do nothing */
         }
         else if (!strcmp(tune, "zero-latency"))
         {
@@ -493,7 +494,7 @@ int x265_check_params(x265_param *param)
           "max consecutive bframe count must be 16 or smaller");
     CHECK(param->lookaheadDepth > X265_LOOKAHEAD_MAX,
           "Lookahead depth must be less than 256");
-    CHECK(param->rc.aqMode < X265_AQ_NONE || param->rc.aqMode > X265_AQ_VARIANCE,
+    CHECK(param->rc.aqMode < X265_AQ_NONE || param->rc.aqMode > X265_AQ_AUTO_VARIANCE,
           "Aq-Mode is out of range");
     CHECK(param->rc.aqStrength < 0 || param->rc.aqStrength > 3,
           "Aq-Strength is out of range");

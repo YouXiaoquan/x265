@@ -358,7 +358,7 @@ bool CLIOptions::parse(int argc, char **argv, x265_param* param)
     const char *bitstreamfn = NULL;
     const char *inputRes = NULL;
     const char *preset = "medium";
-    const char *tune = "psnr";
+    const char *tune = "ssim";
 
     /* Presets are applied before all other options. */
     for (optind = 0;; )
@@ -684,7 +684,7 @@ int main(int argc, char **argv)
             printf(", Global PSNR: %.3f", stats.globalPsnr);
 
         if (param->bEnableSsim)
-            printf(", SSIM Mean Y: %.7f (%6.3fdb)", stats.globalSsim, x265_ssim(stats.globalSsim));
+            printf(", SSIM Mean Y: %.7f (%6.3f dB)", stats.globalSsim, x265_ssim(stats.globalSsim));
 
         printf("\n");
     }
