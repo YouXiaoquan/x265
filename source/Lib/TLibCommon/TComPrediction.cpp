@@ -153,18 +153,8 @@ void TComPrediction::predIntraLumaAng(uint32_t dirMode, Pel* dst, intptr_t strid
         refAbv = refAboveFlt + size - 1;
     }
 
-    // get starting pixel in block
-    bool bFilter = (size <= 16);
-
-    // Create the prediction
-    if (dirMode == PLANAR_IDX)
-    {
-        primitives.intra_pred[log2BlkSize - 2][PLANAR_IDX](dst, stride, refLft, refAbv, dirMode, 0);
-    }
-    else
-    {
-        primitives.intra_pred[log2BlkSize - 2][dirMode](dst, stride, refLft, refAbv, dirMode, bFilter);
-    }
+    bool bFilter = size <= 16 && dirMode != PLANAR_IDX;
+    primitives.intra_pred[log2BlkSize - 2][dirMode](dst, stride, refLft, refAbv, dirMode, bFilter);
 }
 
 // Angular chroma
@@ -183,15 +173,7 @@ void TComPrediction::predIntraChromaAng(Pel* src, uint32_t dirMode, Pel* dst, in
         refLft[k + width - 1] = src[k * ADI_BUF_STRIDE];
     }
 
-    // get starting pixel in block
-    if (dirMode == PLANAR_IDX)
-    {
-        primitives.intra_pred[log2BlkSize][dirMode](dst, stride, refLft + width - 1, refAbv + width - 1, dirMode, 0);
-    }
-    else
-    {
-        primitives.intra_pred[log2BlkSize][dirMode](dst, stride, refLft + width - 1, refAbv + width - 1, dirMode, 0);
-    }
+    primitives.intra_pred[log2BlkSize][dirMode](dst, stride, refLft + width - 1, refAbv + width - 1, dirMode, 0);
 }
 
 /** Function for checking identical motion.

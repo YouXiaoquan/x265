@@ -291,6 +291,9 @@ int x265_param_default_preset(x265_param *param, const char *preset, const char 
             param->bEnableSignHiding = 0;
             param->bEnableWeightedPred = 0;
             param->maxNumReferences = 1;
+            param->rc.aqStrength = 0.0;
+            param->rc.aqMode = X265_AQ_NONE;
+            param->rc.cuTree = 0;
         }
         else if (!strcmp(preset, "superfast"))
         {
@@ -305,6 +308,9 @@ int x265_param_default_preset(x265_param *param, const char *preset, const char 
             param->bEnableCbfFastMode = 1;
             param->bEnableWeightedPred = 0;
             param->maxNumReferences = 1;
+            param->rc.aqStrength = 0.0;
+            param->rc.aqMode = X265_AQ_NONE;
+            param->rc.cuTree = 0;
         }
         else if (!strcmp(preset, "veryfast"))
         {
@@ -317,6 +323,7 @@ int x265_param_default_preset(x265_param *param, const char *preset, const char 
             param->bEnableEarlySkip = 1;
             param->bEnableCbfFastMode = 1;
             param->maxNumReferences = 1;
+            param->rc.cuTree = 0;
         }
         else if (!strcmp(preset, "faster"))
         {
@@ -327,6 +334,7 @@ int x265_param_default_preset(x265_param *param, const char *preset, const char 
             param->bEnableEarlySkip = 1;
             param->bEnableCbfFastMode = 1;
             param->maxNumReferences = 1;
+            param->rc.cuTree = 0;
         }
         else if (!strcmp(preset, "fast"))
         {
@@ -392,13 +400,11 @@ int x265_param_default_preset(x265_param *param, const char *preset, const char 
     {
         if (!strcmp(tune, "psnr"))
         {
-            param->rc.aqMode = X265_AQ_NONE;
-            param->rc.aqStrength = 0.0;
-            param->rc.cuTree = 0;
+            param->rc.aqStrength = 0.0;            
         }
         else if (!strcmp(tune, "ssim"))
         {
-            /* Current Default: Do nothing */
+            param->rc.aqMode = X265_AQ_AUTO_VARIANCE;
         }
         else if (!strcmp(tune, "zero-latency"))
         {
@@ -519,7 +525,18 @@ int x265_check_params(x265_param *param)
     if (param->rc.aqMode == 0 && param->rc.cuTree)
     {
         param->rc.aqMode = X265_AQ_VARIANCE;
-        param->rc.aqStrength = 0;
+        param->rc.aqStrength = 0.0;
+    }
+
+    if(param->bFrameAdaptive == 0 && param->rc.cuTree)
+    {
+        x265_log(NULL, X265_LOG_WARNING, "cuTree disabled, requires lookahead to be enabled\n");
+        param->rc.cuTree = 0;
+    }
+
+    if (param->rc.aqStrength == 0 && param->rc.cuTree == 0)
+    {
+        param->rc.aqMode = X265_AQ_NONE;        
     }
 
     return check_failed;

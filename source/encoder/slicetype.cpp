@@ -46,14 +46,6 @@
 
 using namespace x265;
 
-#define SET_WEIGHT(w, b, s, d, o) \
-    { \
-        (w).inputWeight = (s); \
-        (w).log2WeightDenom = (d); \
-        (w).inputOffset = (o); \
-        (w).bPresentFlag = b; \
-    }
-
 static inline int16_t median(int16_t a, int16_t b, int16_t c)
 {
     int16_t t = (a - b) & ((a - b) >> 31);
@@ -866,7 +858,9 @@ void Lookahead::slicetypeDecide()
             }
         }
 
-        int bframes = X265_MAX(0, j - 1); // max not necessary, but prevents gcc compile error
+        if (!j)
+            return;
+        int bframes = j - 1;
         if (bframes)
             list[bframes - 1]->m_lowres.bLastMiniGopBFrame = true;
         list[bframes]->m_lowres.leadingBframes = bframes;
@@ -1394,7 +1388,7 @@ void Lookahead::estimateCUPropagate(Lowres **Frames, double averageDuration, int
         memset(Frames[b]->propagateCost, 0, widthInCU * sizeof(uint16_t));
 
     uint16_t StrideInCU = (uint16_t)widthInCU;
-    for (uint16_t block_y = 0; block_y < heightInCU; block_y += 16)
+    for (uint16_t block_y = 0; block_y < heightInCU; block_y++)
     {
         int cuIndex = block_y * StrideInCU;
         /* TODO This function go into ASM */
@@ -1404,7 +1398,7 @@ void Lookahead::estimateCUPropagate(Lowres **Frames, double averageDuration, int
 
         if (referenced)
             propagate_cost += widthInCU;
-        for (uint16_t block_x = 0; block_x < widthInCU; block_x += 16, cuIndex++)
+        for (uint16_t block_x = 0; block_x < widthInCU; block_x++, cuIndex++)
         {
             int propagate_amount = scratch[block_x];
             /* Don't propagate for an intra block. */
